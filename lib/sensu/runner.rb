@@ -1,0 +1,171 @@
+require File.join(File.dirname(__FILE__), 'base')
+require File.join(File.dirname(__FILE__), 'socket')
+
+module Sensu
+  class Runner
+    include Utilities
+
+    attr_accessor :safe_mode
+
+    def self.run(options={})
+      runner = self.new(options)
+      EM::run do
+        runner.start
+        runner.trap_signals
+      end
+    end
+
+    def initialize(options={})
+      base = Base.new(options)
+      @logger = base.logger
+      @settings = base.settings
+      base.setup_process
+      @timers = Array.new
+      @checks_in_progress = Array.new
+    end
+
+    def publish_result(check)
+      payload = {
+        #:client => @settings[:client][:name],
+        :check => check
+      }
+      @logger.info('publishing check result', {
+        :payload => payload
+      })
+ #    @transport.publish(:direct, 'results', MultiJson.dump(payload)) do |info|
+ #      if info[:error]
+ #        @logger.error('failed to publish check result', {
+ #          :payload => payload,
+ #          :error => info[:error].to_s
+ #        })
+ #      end
+ #    end
+    end
+
+    def substitute_command_tokens(check)
+      unmatched_tokens = Array.new
+      substituted = check[:command].gsub(/:::([^:]*?):::/) do
+        token, default = $1.to_s.split('|', -1)
+        matched = token.split('.').inject(@settings[:client]) do |client, attribute|
+          if client[attribute].nil?
+            default.nil? ? break : default
+          else
+            client[attribute]
+          end
+        end
+        if matched.nil?
+          unmatched_tokens << token
+        end
+        matched
+      end
+      [substituted, unmatched_tokens]
+    end
+
+    def execute_check_command(check)
+      @logger.debug('attempting to execute check command', {
+        :check => check
+      })
+      unless @checks_in_progress.include?(check[:name])
+        @checks_in_progress << check[:name]
+        command, unmatched_tokens = substitute_command_tokens(check)
+        if unmatched_tokens.empty?
+          check[:executed] = Time.now.to_i
+          execute = Proc.new do
+            @logger.debug('executing check command', {
+              :check => check
+            })
+            started = Time.now.to_f
+            begin
+              check[:output], check[:status] = IO.popen(command, 'r', check[:timeout])
+            rescue => error
+              check[:output] = 'Unexpected error: ' + error.to_s
+              check[:status] = 2
+            end
+            check[:duration] = ('%.3f' % (Time.now.to_f - started)).to_f
+            check
+          end
+          publish = Proc.new do |check|
+            publish_result(check)
+            @checks_in_progress.delete(check[:name])
+          end
+          EM.defer(execute, publish)
+        else
+          check[:output] = 'Unmatched command tokens: ' + unmatched_tokens.join(', ')
+          check[:status] = 3
+          check[:handle] = false
+          publish_result(check)
+          @checks_in_progress.delete(check[:name])
+        end
+      else
+        @logger.warn('previous check command execution in progress', {
+          :check => check
+        })
+      end
+    end
+
+#    def process_check(check)
+#      @logger.debug('processing check', {
+#        :check => check
+#      })
+#      if check.has_key?(:command)
+#        if @settings.check_exists?(check[:name])
+#          check.merge!(@settings[:checks][check[:name]])
+#          execute_check_command(check)
+#        elsif @safe_mode
+#          check[:output] = 'Check is not locally defined (safe mode)'
+#          check[:status] = 3
+#          check[:handle] = false
+#          check[:executed] = Time.now.to_i
+#          publish_result(check)
+#        else
+#          execute_check_command(check)
+#        end
+#      else
+#        if @extensions.check_exists?(check[:name])
+#          run_check_extension(check)
+#        else
+#          @logger.warn('unknown check extension', {
+#            :check => check
+#          })
+#        end
+#      end
+#    end
+
+    def try_one
+      @logger.warn('try_one')
+      check = {
+        name: 'check_ssh',
+        command: '/usr/local/sbin/nagios-plugins/check_tcp -H localhost -p 22'
+      }
+      execute_check_command(check)
+    end
+
+    def start
+      @logger.warn('starting runner')
+      try_one
+    end
+
+    def stop
+      @logger.warn('stopping')
+      EM::stop_event_loop
+    end
+
+    def trap_signals
+      @signals = Array.new
+      STOP_SIGNALS.each do |signal|
+        Signal.trap(signal) do
+          @signals << signal
+        end
+      end
+      EM::PeriodicTimer.new(1) do
+        signal = @signals.shift
+        if STOP_SIGNALS.include?(signal)
+          @logger.warn('received signal', {
+            :signal => signal
+          })
+          stop
+        end
+      end
+    end
+  end
+end
