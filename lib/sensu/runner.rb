@@ -9,9 +9,13 @@ module Sensu
 
     def self.run(options={})
       runner = self.new(options)
+      unless (ARGV.length > 0)
+        print 'OK No arguments given, exit 0\n'
+        exit 0
+      end
       EM::run do
         runner.trap_signals
-        runner.run_checks
+        runner.run_checks(arguments=ARGV)
         runner.stop
       end
     end
@@ -21,7 +25,7 @@ module Sensu
       @logger = base.logger
       @settings = base.settings
       base.setup_process
-      @timers = Array.new
+      # @timers = Array.new
       @checks_in_progress = Array.new
     end
 
@@ -104,36 +108,9 @@ module Sensu
       end
     end
 
-#    def process_check(check)
-#      @logger.debug('processing check', {
-#        :check => check
-#      })
-#      if check.has_key?(:command)
-#        if @settings.check_exists?(check[:name])
-#          check.merge!(@settings[:checks][check[:name]])
-#          execute_check_command(check)
-#        elsif @safe_mode
-#          check[:output] = 'Check is not locally defined (safe mode)'
-#          check[:status] = 3
-#          check[:handle] = false
-#          check[:executed] = Time.now.to_i
-#          publish_result(check)
-#        else
-#          execute_check_command(check)
-#        end
-#      else
-#        if @extensions.check_exists?(check[:name])
-#          run_check_extension(check)
-#        else
-#          @logger.warn('unknown check extension', {
-#            :check => check
-#          })
-#        end
-#      end
-#    end
-
-    def run_checks
-      @logger.warn('running checks')
+    def run_checks(arguments)
+      arguments.each do |check_file|
+      @logger.warn("Checks for #{check_file}")
       check = {
         name: 'check_ssh',
         command: '/usr/local/sbin/nagios-plugins/check_tcp -H localhost -p 22'

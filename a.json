@@ -1,0 +1,10 @@
+{
+  "checks" : {
+    "ssh": {
+      "command": "/usr/local/sbin/nagios-plugins/check_ssh  -p 2222 localhost"
+    },
+    "foobar": {
+      "command": "echo -n foobar && exit 0"
+    }
+  }
+}
