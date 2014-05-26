@@ -131,7 +131,7 @@ module Sensu
 #      end
 #    end
 
-    def try_one
+    def run_checks
       @logger.warn('try_one')
       check = {
         name: 'check_ssh',
@@ -140,14 +140,30 @@ module Sensu
       execute_check_command(check)
     end
 
+    def complete_checks_in_progress(&block)
+      @logger.info('completing checks in progress', {
+        :checks_in_progress => @checks_in_progress
+      })
+      retry_until_true do
+        if @checks_in_progress.empty?
+          block.call
+          true
+        end
+      end
+    end
+
     def start
       @logger.warn('starting runner')
-      try_one
+      run_checks
+      stop
     end
 
     def stop
       @logger.warn('stopping')
-      EM::stop_event_loop
+      complete_checks_in_progress do
+        @logger.warn('stopping reactor')
+        EM::stop_event_loop
+      end
     end
 
     def trap_signals
