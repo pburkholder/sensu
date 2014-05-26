@@ -10,8 +10,9 @@ module Sensu
     def self.run(options={})
       runner = self.new(options)
       EM::run do
-        runner.start
         runner.trap_signals
+        runner.run_checks
+        runner.stop
       end
     end
 
@@ -132,7 +133,7 @@ module Sensu
 #    end
 
     def run_checks
-      @logger.warn('try_one')
+      @logger.warn('running checks')
       check = {
         name: 'check_ssh',
         command: '/usr/local/sbin/nagios-plugins/check_tcp -H localhost -p 22'
@@ -150,12 +151,6 @@ module Sensu
           true
         end
       end
-    end
-
-    def start
-      @logger.warn('starting runner')
-      run_checks
-      stop
     end
 
     def stop
@@ -183,5 +178,6 @@ module Sensu
         end
       end
     end
+
   end
 end
